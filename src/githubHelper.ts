@@ -1105,8 +1105,10 @@ export class GithubHelper {
   // ----------------------------------------------------------------------------
 
   // TODO fix unexpected type coercion risk
+
   /**
    * Converts issue body or issue comments from GitLab to GitHub. That means:
+   *
    * - (optionally) Adds a line at the beginning indicating which original user created the
    *   issue or the comment and when - because the GitHub API creates everything
    *   as the API user
@@ -1121,6 +1123,9 @@ export class GithubHelper {
    * FIXME: conversion should be deactivated depending on the context in the
    *  markdown, e.g. strike-through text for labels, or code blocks for all
    *  references.
+   *
+   * NOTE: We assume that scoped references 'user/repo#id' are to other
+   *       repositories for which we don't have a conversion map.
    *
    * @param str Body of the GitLab note
    * @param item GitLab item to which the note belongs
@@ -1165,16 +1170,26 @@ export class GithubHelper {
     //
 
     let issueReplacer = (match: string) => {
-      // TODO: issueMap
-      return '#' + match;
+      let issue: number;
+      if (this.issueMap && this.issueMap.has(parseInt(match))) {
+        issue = this.issueMap.get(parseInt(match));
+      }
+      if (issue) {
+        console.log(`\tSubstituted #${issue} for #${match}.`);
+        return '#' + issue;
+      } else {
+        console.log(`\tIssue ${match} not found in issue map.`);
+        return '#' + match;
+      }
     };
 
     if (hasProjectmap) {
       reString =
         '(' + Object.keys(settings.projectmap).join(')#(\\d+)|(') + ')#(\\d+)';
+      // Don't try to map references to issues in other repositories
       str = str.replace(
         new RegExp(reString, 'g'),
-        (_, p1, p2) => settings.projectmap[p1] + '#' + issueReplacer(p2)
+        (_, p1, p2) => settings.projectmap[p1] + '#' + p2
       );
     }
     reString = '(?<=\\W)#(\\d+)';
