@@ -22,6 +22,8 @@ const counters = {
   nrOfReplacementIssues: 0,
   nrOfFailedIssues: 0,
   nrOfPlaceholderMilestones: 0,
+  nrOfMigratedLabels: 0,
+  nrOfFailedLabels: 0,
 };
 
 if (settings.s3) {
@@ -209,7 +211,7 @@ async function migrate() {
 
     // Important: do this before transferring the merge requests
     if (settings.transfer.issues) {
-      await transferIssues();
+      await transferIssues(settings.usePlaceholderIssuesForMissingIssues);
     }
 
     if (settings.transfer.mergeRequests) {
@@ -225,6 +227,23 @@ async function migrate() {
   }
 
   console.log('\n\nTransfer complete!\n\n');
+
+  inform(`Statistics`);
+
+  console.log(`Total nr. of issues: ${githubHelper.issueMap.size}`);
+  console.log(
+    `Nr. of used placeholder issues: ${counters.nrOfPlaceholderIssues}`
+  );
+  console.log(`Nr. of issue migration fails: ${counters.nrOfFailedIssues}`);
+  console.log(
+    `Nr. of used replacement issues: ${counters.nrOfReplacementIssues}`
+  );
+  console.log(`Total nr. of milestones: ${githubHelper.milestoneMap.size}`);
+  console.log(
+    `Nr. of used placeholder milestones: ${counters.nrOfPlaceholderMilestones}`
+  );
+  console.log(`Total nr. of labels: ${counters.nrOfMigratedLabels}`);
+  console.log(`Nr. of label migration fails: ${counters.nrOfFailedLabels}`);
 }
 
 // ----------------------------------------------------------------------------
@@ -324,7 +343,7 @@ async function transferMilestones(usePlaceholders: boolean) {
 /**
  * Transfer any labels that exist in GitLab that do not exist in GitHub.
  */
-async function transferLabels(attachmentLabel = true, useLowerCase = true) {
+async function transferLabels(attachmentLabel: boolean, useLowerCase: boolean) {
   inform('Transferring Labels');
 
   // Get a list of all labels associated with this project
@@ -333,7 +352,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
   );
 
   // get a list of the current label names in the new GitHub repo (likely to be just the defaults)
-  let githubLabels: string[] = await githubHelper.getAllGithubLabelNames();
+  const githubLabels: string[] = await githubHelper.getAllGithubLabelNames();
 
   // create a hasAttachment label for manual attachment migration
   if (attachmentLabel) {
@@ -355,18 +374,19 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
     // GitHub prefers lowercase label names
     if (useLowerCase) label.name = label.name.toLowerCase();
 
-    if (!githubLabels.find(l => l === label.name)) {
-      console.log('Creating: ' + label.name);
-      try {
-        // process asynchronous code in sequence
-        await githubHelper.createLabel(label).catch(x => {});
-      } catch (err) {
-        console.error('Could not create label', label.name);
-        console.error(err);
-      }
-    } else {
-      console.log('Already exists: ' + label.name);
+    if (githubLabels.find(l => l === label.name)) {
+      console.log('Label already exists: ' + label.name);
+      continue;
     }
+
+    console.log(`Migrating label: ${label.name}...`);
+    await githubHelper
+      .createLabel(label)
+      .then(() => counters.nrOfMigratedLabels++)
+      .catch(err => {
+        counters.nrOfFailedLabels++;
+        console.error(`\t...ERROR while creating label ${label.name}: ${err}`);
+      });
   }
 }
 
@@ -375,7 +395,7 @@ async function transferLabels(attachmentLabel = true, useLowerCase = true) {
 /**
  * Transfer any issues and their comments that exist in GitLab that do not exist in GitHub.
  */
-async function transferIssues() {
+async function transferIssues(usePlaceholders: boolean) {
   inform('Transferring Issues');
 
   await githubHelper.registerMilestoneMap();
@@ -391,29 +411,32 @@ async function transferIssues() {
   issues = issues.sort((a, b) => a.iid - b.iid);
 
   // get a list of the current issues in the new GitHub repo (likely to be empty)
-  let githubIssues = await githubHelper.getAllGithubIssues();
+  const githubIssues = await githubHelper.getAllGithubIssues();
 
   console.log(`Transferring ${issues.length} issues.`);
 
-  if (settings.usePlaceholderIssuesForMissingIssues) {
-    for (let i = 0; i < issues.length; i++) {
-      // GitLab issue internal Id (iid)
-      let expectedIdx = i + 1;
+  let issueMap = new Map<number, number>();
 
-      // is there a gap in the GitLab issues?
-      // Create placeholder issues so that new GitHub issues will have the same
-      // issue number as in GitLab. If a placeholder is used it is because there
-      // was a gap in GitLab issues -- likely caused by a deleted GitLab issue.
-      if (issues[i].iid !== expectedIdx) {
-        issues.splice(i, 0, createPlaceholderIssue(expectedIdx) as GitLabIssue); // HACK: remove type coercion
-        counters.nrOfPlaceholderIssues++;
-        console.log(
-          `Added placeholder issue for GitLab issue #${expectedIdx}.`
-        );
-      }
+  for (let i = 0; i < issues.length; i++) {
+    let issue = issues[i];
+    let expectedIdx = i + 1;
+
+    // Create placeholder issues so that new GitHub issues will have the same
+    // issue number as in GitLab. If a placeholder is used it is because there
+    // was a gap in GitLab issues -- likely caused by a deleted GitLab issue.
+    if (usePlaceholders && issue.iid !== expectedIdx) {
+      // HACK: remove type coercion
+      let placeholder = createPlaceholderIssue(expectedIdx) as GitLabIssue;
+      issues.splice(i, 0, placeholder);
+      counters.nrOfPlaceholderIssues++;
+      console.log(`Added placeholder for GitLab issue #${expectedIdx}.`);
+      issueMap.set(expectedIdx, expectedIdx);
+    } else {
+      issueMap.set(issue.iid, expectedIdx);
     }
   }
 
+  await githubHelper.registerIssueMap(issueMap);
   //
   // Create GitHub issues for each GitLab issue
   //
@@ -424,58 +447,50 @@ async function transferIssues() {
     let githubIssue = githubIssues.find(
       i => i.title.trim() === issue.title.trim()
     );
-    if (!githubIssue) {
-      console.log(`\nMigrating issue #${issue.iid} ('${issue.title}')...`);
-      try {
-        // process asynchronous code in sequence -- treats the code sort of like blocking
-        await githubHelper.createIssueAndComments(issue);
-        console.log(`\t...DONE migrating issue #${issue.iid}.`);
-      } catch (err) {
-        console.log(`\t...ERROR while migrating issue #${issue.iid}.`);
 
-        console.error('DEBUG:\n', err); // TODO delete this after issue-migration-fails have been fixed
+    if (githubIssue) {
+      console.log(`Updating issue #${issue.iid} - ${issue.title}...`);
+      await githubHelper
+        .updateIssueState(githubIssue, issue)
+        .then(() => console.log(`\t...done updating issue #${issue.iid}.`))
+        .catch(err => {
+          console.error(`\t...ERROR while updating issue #${issue.iid}.`);
+        });
 
+      continue;
+    }
+
+    console.log(`\nMigrating issue #${issue.iid} ('${issue.title}')...`);
+    await githubHelper
+      .createIssueAndComments(issue)
+      .then(() => console.log(`\t...done migrating issue #${issue.iid}.`))
+      .catch(err => {
+        console.error(`\t...ERROR while migrating issue #${issue.iid}: ${err}`);
+
+        // TODO delete this after issue-migration-fails have been fixed
+        console.error('DEBUG:\n', err);
+        counters.nrOfFailedIssues++;
         if (settings.useReplacementIssuesForCreationFails) {
           console.log('\t-> creating a replacement issue...');
           const replacementIssue = createReplacementIssue(issue);
-          try {
-            await githubHelper.createIssueAndComments(
-              replacementIssue as GitLabIssue
-            ); // HACK: remove type coercion
 
-            counters.nrOfReplacementIssues++;
-            console.error('\t...DONE.');
-          } catch (err) {
-            counters.nrOfFailedIssues++;
-            console.error(
-              '\t...ERROR: Could not create replacement issue either!'
-            );
-          }
+          githubHelper
+            // HACK: remove type coercion
+            .createIssueAndComments(replacementIssue as GitLabIssue)
+            .then(() => {
+              counters.nrOfReplacementIssues++;
+              console.error('\t...done.');
+            })
+            .catch(err => {
+              console.error(
+                '\t...ERROR: Could not create replacement issue either!'
+              );
+            });
         }
-      }
-    } else {
-      console.log(`Updating issue #${issue.iid} - ${issue.title}...`);
-      try {
-        await githubHelper.updateIssueState(githubIssue, issue);
-        console.log(`...Done updating issue #${issue.iid}.`);
-      } catch (err) {
-        console.log(`...ERROR while updating issue #${issue.iid}.`);
-      }
-    }
+      });
   }
-
-  // print statistics about issue migration:
-  console.log(`DONE creating issues.`);
-  console.log(`\n\tStatistics:`);
-  console.log(`\tTotal nr. of issues: ${issues.length}`);
-  console.log(
-    `\tNr. of used placeholder issues: ${counters.nrOfPlaceholderIssues}`
-  );
-  console.log(
-    `\tNr. of used replacement issues: ${counters.nrOfReplacementIssues}`
-  );
-  console.log(`\tNr. of issue migration fails: ${counters.nrOfFailedIssues}`);
 }
+
 // ----------------------------------------------------------------------------
 
 /**

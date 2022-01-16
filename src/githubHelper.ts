@@ -68,6 +68,7 @@ export class GithubHelper {
   delayInMs: number;
   useIssuesForAllMergeRequests: boolean;
   milestoneMap?: Map<number, SimpleMilestone>;
+  issueMap?: Map<number, number>;
 
   constructor(
     githubApi: GitHubApi,
@@ -1377,6 +1378,20 @@ export class GithubHelper {
       let milestoneData = await this.getAllGithubMilestones();
       this.milestoneMap = new Map<number, SimpleMilestone>();
       milestoneData.forEach(m => this.milestoneMap.set(m.number, m));
+    }
+  }
+
+  /**
+   * Meh...
+   * @param issueMap
+   */
+  async registerIssueMap(issueMap?: Map<number, number>) {
+    if (issueMap) {
+      this.issueMap = issueMap;
+    } else if (!issueMap && !this.issueMap) {
+      let issueData = await this.getAllGithubIssues();
+      this.issueMap = new Map<number, number>();
+      issueData.forEach(issue => this.issueMap.set(issue.number, issue.number));
     }
   }
 
