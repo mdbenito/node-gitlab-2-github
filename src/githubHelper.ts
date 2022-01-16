@@ -108,8 +108,7 @@ export class GithubHelper {
 
       this.repoId = result.data.id;
     } catch (err) {
-      console.error('Could not access GitHub repo');
-      console.error(err);
+      console.error(`ERROR, could not access GitHub repo: ${err}`);
       process.exit(1);
     }
   }

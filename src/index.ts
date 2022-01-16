@@ -21,6 +21,7 @@ const counters = {
   nrOfPlaceholderIssues: 0,
   nrOfReplacementIssues: 0,
   nrOfFailedIssues: 0,
+  nrOfFailedMilestones: 0,
   nrOfPlaceholderMilestones: 0,
   nrOfMigratedLabels: 0,
   nrOfFailedLabels: 0,
@@ -256,7 +257,10 @@ async function transferDescription() {
 
   let project = await gitlabApi.Projects.show(settings.gitlab.projectId);
 
-  await githubHelper.updateRepositoryDescription(project.description);
+  await githubHelper
+    .updateRepositoryDescription(project.description)
+    .then(_ => console.log('Done'))
+    .catch(response => console.error(`Something went wrong: ${response}`));
 }
 
 // ----------------------------------------------------------------------------
@@ -294,9 +298,7 @@ async function transferMilestones(usePlaceholders: boolean) {
       let placeholder = createPlaceholderMilestone(expectedIdx);
       milestones.splice(i, 0, placeholder);
       counters.nrOfPlaceholderMilestones++;
-      console.log(
-        `Added placeholder milestone for GitLab milestone %${expectedIdx}.`
-      );
+      console.log(`Added placeholder for GitLab milestone %${expectedIdx}.`);
       milestoneMap.set(expectedIdx, {
         number: expectedIdx,
         title: placeholder.title,
@@ -316,25 +318,27 @@ async function transferMilestones(usePlaceholders: boolean) {
     let foundMilestone = githubMilestones.find(
       m => m.title === milestone.title
     );
-    if (!foundMilestone) {
-      console.log('Creating: ' + milestone.title);
-      await githubHelper
-        .createMilestone(milestone)
-        .then(created => {
-          let m = milestoneMap.get(milestone.iid);
-          if (m && m.number != created.number) {
-            throw new Error(
-              `Mismatch between milestone ${m.number}: '${m.title}' in map and created ${created.number}: '${created.title}'`
-            );
-          }
-        })
-        .catch(err => {
-          console.error(`Error creating milestone '${milestone.title}'.`);
-          console.error(err);
-        });
-    } else {
-      console.log('Already exists: ' + milestone.title);
+
+    if (foundMilestone) {
+      console.log('Milestone already exists: ' + milestone.title);
+      continue;
     }
+
+    console.log('Migrating milestone %' + milestone.title);
+    await githubHelper
+      .createMilestone(milestone)
+      .then(created => {
+        let m = milestoneMap.get(milestone.iid);
+        if (m && m.number != created.number) {
+          throw new Error(
+            `Mismatch between milestone ${m.title} in map and created ${created.title}`
+          );
+        }
+      })
+      .catch(err => {
+        console.error(`Error creating milestone '${milestone.title}': ${err}`);
+        counters.nrOfFailedMilestones++;
+      });
   }
 }
 
@@ -585,9 +589,8 @@ async function transferMergeRequests() {
  * Please note that due to github api restrictions, this only transfers the
  * name, description and tag name of the release. It sorts the releases chronologically
  * and creates them on github one by one
- * @returns {Promise<void>}
  */
-async function transferReleases() {
+async function transferReleases(): Promise<void> {
   inform('Transferring Releases');
 
   // Get a list of all releases associated with this project
