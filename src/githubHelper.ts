@@ -69,6 +69,7 @@ export class GithubHelper {
   useIssuesForAllMergeRequests: boolean;
   milestoneMap?: Map<number, SimpleMilestone>;
   issueMap?: Map<number, number>;
+  mrMap?: Map<number, number>;
 
   constructor(
     githubApi: GitHubApi,
@@ -1293,7 +1294,31 @@ export class GithubHelper {
     //
     // MR reference conversion
     //
-    // TODO
+    let mrReplacer = (match: string) => {
+      let pr: number;
+      if (this.mrMap && this.mrMap.has(parseInt(match))) {
+        pr = this.mrMap.get(parseInt(match));
+      }
+      if (pr) {
+        console.log(`\tSubstituted #${pr} for !${match}.`);
+        return '#' + pr;
+      } else {
+        console.log(`\tMR ${match} not found in merge request map.`);
+        return '!' + match; // Return as is
+      }
+    };
+
+    if (hasProjectmap) {
+      reString =
+        '(' + Object.keys(settings.projectmap).join(')!(\\d+)|(') + ')!(\\d+)';
+      // Don't try to map references to merge requests in other repositories
+      str = str.replace(
+        new RegExp(reString, 'g'),
+        (_, p1, p2) => settings.projectmap[p1] + '#' + p2
+      );
+    }
+    reString = '(?<=\\W)!(\\d+)';
+    str = str.replace(new RegExp(reString, 'g'), (_, p1) => mrReplacer(p1));
 
     str = await utils.migrateAttachments(
       str,
@@ -1408,6 +1433,41 @@ export class GithubHelper {
       issueData.forEach(issue => this.issueMap.set(issue.number, issue.number));
     }
   }
+
+  /**
+   * Meh...
+   * @param mrMap
+   */
+  async registerMergeRequestMap(
+    mrMap?: Map<number, number>,
+    usePlaceholders: boolean = true
+  ) {
+    if (mrMap) {
+      this.mrMap = mrMap;
+    } else if (!mrMap && !this.mrMap) {
+      let mergeRequests = await this.gitlabHelper.gitlabApi.MergeRequests.all({
+        projectId: settings.gitlab.projectId,
+        labels: settings.filterByLabel,
+      });
+      mergeRequests = mergeRequests.sort((a, b) => a.iid - b.iid);
+      mrMap = new Map<number, number>();
+      const lastIssueNumber = Math.max.apply(
+        Math,
+        Array.from(this.issueMap.values())
+      );
+      for (let i = 0; i < mergeRequests.length; i++) {
+        let mr = mergeRequests[i];
+        let expectedIdx = i + 1;
+        if (usePlaceholders && mr.iid !== expectedIdx) {
+          mrMap.set(expectedIdx, expectedIdx + lastIssueNumber);
+        } else {
+          mrMap.set(mr.iid, expectedIdx + lastIssueNumber);
+        }
+      }
+      this.mrMap = mrMap;
+    }
+  }
+
 
   /**
    * Deletes the GH repository, then creates it again.

@@ -23,6 +23,7 @@ export default interface Settings {
   usePlaceholderMilestonesForMissingMilestones: boolean;
   usePlaceholderIssuesForMissingIssues: boolean;
   useReplacementIssuesForCreationFails: boolean;
+  usePlaceholderIssuesForMissingMergeRequests: boolean;
   useIssuesForAllMergeRequests: boolean;
   filterByLabel?: string;
   skipMergeRequestStates: string[];

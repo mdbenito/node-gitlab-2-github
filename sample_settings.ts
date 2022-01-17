@@ -45,6 +45,7 @@ export default {
   usePlaceholderMilestonesForMissingMilestones: true,
   usePlaceholderIssuesForMissingIssues: true,
   useReplacementIssuesForCreationFails: true,
+  usePlaceholderIssuesForMissingMergeRequests: true,
   useIssuesForAllMergeRequests: false,
   filterByLabel: null,
   skipMergeRequestStates: [],

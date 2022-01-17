@@ -4,7 +4,12 @@ import {
   SimpleLabel,
   SimpleMilestone,
 } from './githubHelper';
-import { GitlabHelper, GitLabIssue, GitLabMilestone } from './gitlabHelper';
+import {
+  GitlabHelper,
+  GitLabIssue,
+  GitLabMergeRequest,
+  GitLabMilestone,
+} from './gitlabHelper';
 import settings from '../settings';
 
 import { Octokit as GitHubApi } from '@octokit/rest';
@@ -25,6 +30,8 @@ const counters = {
   nrOfPlaceholderMilestones: 0,
   nrOfMigratedLabels: 0,
   nrOfFailedLabels: 0,
+  nrOfMigratedMergeRequests: 0,
+  nrOfFailedMergeRequests: 0,
 };
 
 if (settings.s3) {
@@ -121,34 +128,20 @@ async function recreate() {
 }
 
 /**
- * Creates dummy data for a placeholder milestone
+ * Creates dummy data for a placeholder issue / milestone / merge request
  *
- * @param expectedIdx Number of the GitLab milestone
- * @returns Data for the milestone
+ * @param expectedIdx Number of the GitLab item
+ * @returns Data for the item
  */
-function createPlaceholderMilestone(expectedIdx: number): MilestoneImport {
-  return {
-    id: -1, // dummy
-    iid: expectedIdx,
-    title: `[PLACEHOLDER] - for milestone #${expectedIdx}`,
-    description:
-      'This is to ensure that milestone numbers in GitLab and GitHub are the same',
-    state: 'closed',
-  };
-}
-
-/**
- * Creates dummy data for a placeholder issue
- *
- * @param expectedIdx Number of the GitLab issue
- * @returns Data for the issue
- */
-function createPlaceholderIssue(expectedIdx: number): Partial<GitLabIssue> {
+function createPlaceholderData(
+  item: GitLabIssue | GitLabMilestone | GitLabMergeRequest,
+  expectedIdx: number
+): Partial<typeof item> {
   return {
     iid: expectedIdx,
-    title: `[PLACEHOLDER] - for issue #${expectedIdx}`,
+    title: `[PLACEHOLDER] - for ${typeof item} #${expectedIdx}`,
     description:
-      'This is to ensure that issue numbers in GitLab and GitHub are the same',
+      'This is to ensure that the numbering in GitHub is consistent. In particular it helps with auto-references in comments using #, %, !, etc.',
     state: 'closed',
     isPlaceholder: true,
   };
@@ -219,7 +212,9 @@ async function migrate() {
       if (settings.mergeRequests.log) {
         await logMergeRequests(settings.mergeRequests.logFile);
       } else {
-        await transferMergeRequests();
+        await transferMergeRequests(
+          settings.usePlaceholderIssuesForMissingMergeRequests
+        );
       }
     }
   } catch (err) {
@@ -245,6 +240,12 @@ async function migrate() {
   );
   console.log(`Total nr. of labels: ${counters.nrOfMigratedLabels}`);
   console.log(`Nr. of label migration fails: ${counters.nrOfFailedLabels}`);
+  console.log(
+    `Total nr. of merge requests: ${counters.nrOfMigratedMergeRequests}`
+  );
+  console.log(
+    `Nr. of merge request migration fails: ${counters.nrOfFailedMergeRequests}`
+  );
 }
 
 // ----------------------------------------------------------------------------
@@ -295,7 +296,10 @@ async function transferMilestones(usePlaceholders: boolean) {
     // the same milestone number as in GitLab. Gaps are caused by deleted
     // milestones
     if (usePlaceholders && milestone.iid !== expectedIdx) {
-      let placeholder = createPlaceholderMilestone(expectedIdx);
+      let placeholder = createPlaceholderData(
+        milestone as GitLabMilestone,
+        expectedIdx
+      ) as GitLabMilestone;
       milestones.splice(i, 0, placeholder);
       counters.nrOfPlaceholderMilestones++;
       console.log(`Added placeholder for GitLab milestone %${expectedIdx}.`);
@@ -430,7 +434,10 @@ async function transferIssues(usePlaceholders: boolean) {
     // was a gap in GitLab issues -- likely caused by a deleted GitLab issue.
     if (usePlaceholders && issue.iid !== expectedIdx) {
       // HACK: remove type coercion
-      let placeholder = createPlaceholderIssue(expectedIdx) as GitLabIssue;
+      let placeholder = createPlaceholderData(
+        issue,
+        expectedIdx
+      ) as GitLabIssue;
       issues.splice(i, 0, placeholder);
       counters.nrOfPlaceholderIssues++;
       console.log(`Added placeholder for GitLab issue #${expectedIdx}.`);
@@ -441,6 +448,8 @@ async function transferIssues(usePlaceholders: boolean) {
   }
 
   await githubHelper.registerIssueMap(issueMap);
+  await githubHelper.registerMergeRequestMap();
+
   //
   // Create GitHub issues for each GitLab issue
   //
@@ -501,12 +510,12 @@ async function transferIssues(usePlaceholders: boolean) {
  * Transfer any merge requests that exist in GitLab that do not exist in GitHub
  * TODO - Update all text references to use the new issue numbers;
  *        GitHub treats pull requests as issues, therefore their numbers are changed
- * @returns {Promise<void>}
  */
-async function transferMergeRequests() {
+async function transferMergeRequests(usePlaceholders: boolean): Promise<void> {
   inform('Transferring Merge Requests');
 
   await githubHelper.registerMilestoneMap();
+  await githubHelper.registerIssueMap();
 
   // Get a list of all pull requests (merge request equivalent) associated with
   // this project
@@ -520,11 +529,47 @@ async function transferMergeRequests() {
 
   // Get a list of the current pull requests in the new GitHub repo (likely to
   // be empty)
-  let githubPullRequests = await githubHelper.getAllGithubPullRequests();
+  const githubPullRequests = await githubHelper.getAllGithubPullRequests();
 
   // get a list of the current issues in the new GitHub repo (likely to be empty)
   // Issues are sometimes created from Gitlab merge requests. Avoid creating duplicates.
   let githubIssues = await githubHelper.getAllGithubIssues();
+
+  let mrMap = new Map<number, number>();
+  // GitHub PRs follow the same numbering as issues. The first PR we create
+  // will be after the last issue
+
+  // FIXME: this breaks as soon as we update a repo!!!!
+
+  const lastIssueNumber = Math.max.apply(
+    Math,
+    Array.from(githubHelper.issueMap.values())
+  );
+
+  for (let i = 0; i < mergeRequests.length; i++) {
+    let mr = mergeRequests[i];
+    let expectedIdx = i + 1;
+
+    // Create placeholder MRs so that references in comments are properly
+    // converted. If a placeholder is used it is because there was a gap in the
+    // GitLab merge requests -- likely caused by a deleted GitLab MR
+    if (usePlaceholders && mr.iid !== expectedIdx) {
+      let placeholder = createPlaceholderData(
+        mr,
+        expectedIdx
+      ) as GitLabMergeRequest;
+      mergeRequests.splice(i, 0, placeholder);
+      counters.nrOfPlaceholderIssues++;
+      console.log(
+        `Added placeholder for GitLab merge request !${expectedIdx}.`
+      );
+      mrMap.set(expectedIdx, expectedIdx + lastIssueNumber);
+    } else {
+      mrMap.set(mr.iid, expectedIdx + lastIssueNumber);
+    }
+  }
+
+  await githubHelper.registerMergeRequestMap(mrMap);
 
   console.log(
     'Transferring ' + mergeRequests.length.toString() + ' merge requests'
@@ -554,30 +599,24 @@ async function transferMergeRequests() {
         continue;
       }
       console.log('Creating pull request: !' + mr.iid + ' - ' + mr.title);
-      try {
-        // process asynchronous code in sequence
-        await githubHelper.createPullRequestAndComments(mr);
-      } catch (err) {
-        console.error(
-          'Could not create pull request: !' + mr.iid + ' - ' + mr.title
-        );
-        console.error(err);
-      }
+      await githubHelper
+        .createPullRequestAndComments(mr)
+        .then(() => counters.nrOfMigratedMergeRequests++)
+        .catch(err => {
+          counters.nrOfFailedMergeRequests++;
+          console.error(
+            `Could not create pull request ${mr.iid}-${mr.title}: ${err}.`
+          );
+        });
     } else {
       if (githubRequest) {
         console.log(
-          'Gitlab merge request already exists (as github pull request): ' +
-            mr.iid +
-            ' - ' +
-            mr.title
+          `GitLab merge request already exists as GitHub pull request ${mr.iid}-${mr.title}.`
         );
         githubHelper.updatePullRequestState(githubRequest, mr);
       } else {
         console.log(
-          'Gitlab merge request already exists (as github issue): ' +
-            mr.iid +
-            ' - ' +
-            mr.title
+          `GitLab merge request already exists as GitHub issue ${mr.iid}-${mr.title}.`
         );
       }
     }
