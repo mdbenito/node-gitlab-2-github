@@ -18,8 +18,8 @@ export default interface Settings {
     issues: boolean;
     mergeRequests: boolean;
     releases: boolean;
+    attachments: boolean;
   };
-  useIssueImportAPI: boolean;
   usePlaceholderMilestonesForMissingMilestones: boolean;
   usePlaceholderIssuesForMissingIssues: boolean;
   useReplacementIssuesForCreationFails: boolean;
@@ -36,7 +36,7 @@ export default interface Settings {
 }
 
 export interface GithubSettings {
-  baseUrl?: string;
+  baseUrl: string;
   apiUrl?: string;
   owner: string;
   token: string;
@@ -45,6 +45,7 @@ export interface GithubSettings {
   timeout?: number;
   username?: string; // when is this set???
   recreateRepo?: boolean;
+  useIssueImportAPI: boolean;
 }
 
 export interface GitlabSettings {

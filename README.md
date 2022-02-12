@@ -92,9 +92,13 @@ If true (default is false), we will try to delete the destination github reposit
 
 This is useful when debugging this tool or a specific migration. You will always be prompted for confirmation.
 
+### github.useIssueImportAPI
+
+Set to true (default) to enable using the [GitHub preview API for importing issues](https://gist.github.com/jonmagic/5282384165e0f86ef105). This allows setting the date for issues and comments instead of inserting an additional line in the body.
+
 ### s3 (optional)
 
-S3 can be used to store attachments from issues. If omitted, `has attachment` label will be added to GitHub issue.
+S3 can be used to migrate attachments from issues. If omitted, `has attachment` label will be added to the GitHub issue .
 
 #### s3.accessKeyId and s3.secretAccessKey
 
@@ -144,13 +148,16 @@ If this is set to true (default) then the migration process will transfer releas
 Note that github api for releases is limited and hence this will only transfer the title and description of the releases
 and add them to github in chronological order, but it would not preserve the original release dates, nor transfer artefacts or assets.
 
+#### transfer.attachments
+
+If this is set to true (default) then the migration process will transfer attachments. You need to configure s3 settings in order
+to actually transfer them. Otherwise the migration will only rewrite URLs so that they point to the original location within the gitlab instance.
+
+If set to false, then neither uploading to S3 nor URL rewriting will happen.
+
 ### debug
 
 As default it is set to false. Doesn't fire the requests to github api and only does the work on the gitlab side to test for wonky cases before using up api-calls
-
-### useIssueImportAPI
-
-Set to true (default) to enable using the [GitHub preview API for importing issues](https://gist.github.com/jonmagic/5282384165e0f86ef105). This allows setting the date for issues and comments instead of inserting an additional line in the body.
 
 ### usePlaceholderIssuesForMissingIssues
 
@@ -169,7 +176,7 @@ It would of course be better to find the cause for migration fails, so that no r
 ### useIssuesForAllMergeRequests
 
 If this is set to true (default is false) then all merge requests will be migrated as GitHub issues (rather than pull requests). This can be
-used to sidestep the problem where pull requests are rejected by GitHub if the feature branch no longer exists or has been merged.
+used to sidestep the problem where pull requests are rejected by GitHub if the feature branch no longer exists or has been merged. Note that by default, when this happens, an issue is created in its place with the label "gitlab merge request".
 
 ### filterByLabel
 
