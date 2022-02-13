@@ -101,7 +101,8 @@ export class S3Helper implements StorageHelper {
   }
 
   /**
-   *
+   * TODO: download a list of items in the bucket and only upload if the
+   * file is new.
    * @param attachment
    */
   async migrateAttachment(attachment: AttachmentMetadata) {
@@ -110,10 +111,10 @@ export class S3Helper implements StorageHelper {
       .getAttachment(attachment.origin)
       .then(buffer => {
         const params: S3.PutObjectRequest = {
+          Bucket: this.bucket,
           Key: attachment.destination,
           Body: buffer,
           ContentType: attachment.mimeType,
-          Bucket: this.bucket,
         };
         console.log(`\tUploading to ${attachment.destination}... `);
         return this.s3.upload(params).promise();

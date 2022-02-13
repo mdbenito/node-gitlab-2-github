@@ -18,13 +18,7 @@ import {
   GitLabUser,
 } from './gitlabHelper';
 import { SimpleItem } from './utils';
-import {
-  AttachmentMetadata,
-  PassThroughStorageHelper,
-  S3Helper,
-  StorageHelper,
-} from './storageHelper';
-import { String } from 'aws-sdk/clients/cloudwatchevents';
+import { AttachmentMetadata, StorageHelper } from './storageHelper';
 
 /**
  * Handles mapping and conversion of GitLab items into GitHub items.
@@ -66,7 +60,7 @@ export class RepoConverter {
    *   milestones in place of deleted ones to keep the numbering consistent.
    */
   async buildMilestoneMap(usePlaceholders: boolean) {
-    let githubMilestones = await this.githubHelper.getAllGithubMilestones();
+    let githubMilestones = await this.githubHelper.getAllMilestones();
     let gitlabMilestones = await this.gitlabHelper.getAllMilestones();
 
     // Compute the first available ID for newly imported milestones
@@ -105,7 +99,7 @@ export class RepoConverter {
    * @param usePlaceholders
    */
   async buildIssueMap(usePlaceholders: boolean) {
-    let githubIssues = await this.githubHelper.getAllGithubIssues();
+    let githubIssues = await this.githubHelper.getAllIssues();
     let gitlabIssues = await this.gitlabHelper.getAllIssues();
 
     let issueMap = new Map<number, number>();
@@ -120,7 +114,7 @@ export class RepoConverter {
    */
   async buildMergeRequestMap(usePlaceholders: boolean) {
     if (!this.issueMap) throw Error('issueMap not initialised');
-    let pullRequests = await this.githubHelper.getAllGithubPullRequests();
+    let pullRequests = await this.githubHelper.getAllPullRequests();
     let mergeRequests = await this.gitlabHelper.getAllMergeRequests();
 
     mergeRequests = mergeRequests.sort((a, b) => a.iid - b.iid);

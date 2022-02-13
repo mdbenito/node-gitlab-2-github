@@ -77,6 +77,7 @@ export class GitHubHelper {
   repoId?: number;
   delayInMs: number;
   useIssuesForAllMergeRequests: boolean;
+  useIssueImportAPI: boolean;
 
   constructor(
     githubApi: GitHubApi,
@@ -89,6 +90,7 @@ export class GitHubHelper {
     this.githubToken = githubSettings.token;
     this.githubRepo = githubSettings.repo;
     this.githubTimeout = githubSettings.timeout;
+    this.useIssueImportAPI = githubSettings.useIssueImportAPI;
     this.delayInMs = 2000;
     this.useIssuesForAllMergeRequests = useIssuesForAllMergeRequests;
   }
@@ -126,7 +128,7 @@ export class GitHubHelper {
   /**
    * Get a list of all GitHub milestones currently in new repo
    */
-  async getAllGithubMilestones(): Promise<SimpleItem[]> {
+  async getAllMilestones(): Promise<SimpleItem[]> {
     return await utils
       .sleep(this.delayInMs)
       .then(() =>
@@ -157,7 +159,7 @@ export class GitHubHelper {
    * Get a list of all the current GitHub issues.
    * This uses a while loop to make sure that each page of issues is received.
    */
-  async getAllGithubIssues(): Promise<GitHubIssue[]> {
+  async getAllIssues(): Promise<GitHubIssue[]> {
     let allIssues: GitHubIssue[] = [];
     let page = 1;
     const perPage = 100;
@@ -196,7 +198,7 @@ export class GitHubHelper {
   /**
    * Get a list of all GitHub label names currently in new repo
    */
-  async getAllGithubLabelNames(): Promise<string[]> {
+  async getAllLabelNames(): Promise<string[]> {
     type LabelsResponse =
       Endpoints['GET /repos/{owner}/{repo}/labels']['response'];
 
@@ -246,7 +248,7 @@ export class GitHubHelper {
    * Get a list of all the current GitHub pull requests.
    * This uses a while loop to make sure that each page of issues is received.
    */
-  async getAllGithubPullRequests(): Promise<GitHubPullRequest[]> {
+  async getAllPullRequests(): Promise<GitHubPullRequest[]> {
     let allPullRequests: PullsListResponseData = [];
     let page = 1;
     const perPage = 100;
@@ -407,7 +409,7 @@ export class GitHubHelper {
   ): Promise<number> {
     // create the GitHub issue from the GitLab issue
     let pending = await this.githubApi.request(
-      `POST /repos/${settings.github.owner}/${settings.github.repo}/import/issues`,
+      `POST /repos/${this.githubOwner}/${this.githubRepo}/import/issues`,
       {
         issue: utils.pick(
           issue,
@@ -431,7 +433,7 @@ export class GitHubHelper {
         .sleep(backoff)
         .then(() =>
           this.githubApi.request(
-            `GET /repos/${settings.github.owner}/${settings.github.repo}/import/issues/${pending.data.id}`
+            `GET /repos/${this.githubOwner}/${this.githubRepo}/import/issues/${pending.data.id}`
           )
         )
         .then(response => {
@@ -710,7 +712,7 @@ export class GitHubHelper {
     };
 
     console.log('\tCreating issue for PR...');
-    if (settings.github.useIssueImportAPI) {
+    if (this.useIssueImportAPI) {
       props = {
         ...props,
         ...utils.pick(
@@ -788,7 +790,7 @@ export class GitHubHelper {
     issue: GitHubIssueData,
     comments: GitHubCommentData[]
   ) {
-    if (settings.github.useIssueImportAPI) {
+    if (this.useIssueImportAPI) {
       return this.importIssueAndComments(issue, comments);
     } else {
       return this.createIssue(issue)
