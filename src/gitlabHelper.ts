@@ -1,4 +1,4 @@
-import { Gitlab } from '@gitbeaker/node';
+import { Gitlab as GitlabApi } from '@gitbeaker/node';
 import {
   BranchSchema,
   IssueSchema,
@@ -25,9 +25,9 @@ export type GitLabLabel = LabelSchema;
 export class GitLabHelper {
   // Wait for this issue to be resolved
   // https://github.com/jdalrymple/gitbeaker/issues/793
-  private readonly gitlabApi: InstanceType<typeof Gitlab>;
-  private readonly gitlabProjectId: number;
+  private readonly projectId: number;
   private readonly sessionCookie: string;
+  readonly api: InstanceType<typeof GitlabApi>;
   readonly host: string;
   projectPath?: string;
 
@@ -41,14 +41,16 @@ export class GitLabHelper {
   private readonly skipMatchingComments?: string[];
 
   constructor(
-    gitlabApi: InstanceType<typeof Gitlab>,
     gitlabSettings: GitlabSettings,
     filterByLabel?: string,
     skipMergeRequestStates?: string[],
     skipMatchingComments?: string[]
   ) {
-    this.gitlabApi = gitlabApi;
-    this.gitlabProjectId = gitlabSettings.projectId;
+    this.api = new GitlabApi({
+      host: gitlabSettings.url ? gitlabSettings.url : 'https://gitlab.com',
+      token: gitlabSettings.token,
+    });
+    this.projectId = gitlabSettings.projectId;
     this.host = gitlabSettings.url ? gitlabSettings.url : 'http://gitlab.com';
     this.host = this.host.endsWith('/')
       ? this.host.substring(0, this.host.length - 1)
@@ -64,7 +66,7 @@ export class GitLabHelper {
    */
   async listProjects() {
     try {
-      const projects = await this.gitlabApi.Projects.all({ membership: true });
+      const projects = await this.api.Projects.all({ membership: true });
 
       // print each project with info
       for (let project of projects) {
@@ -93,11 +95,11 @@ export class GitLabHelper {
    * Stores project path in a field
    */
   async registerProjectPath() {
-    await this.gitlabApi.Projects.show(this.gitlabProjectId)
+    await this.api.Projects.show(this.projectId)
       .then(project => (this.projectPath = project['path_with_namespace']))
       .catch(err => {
         console.error(
-          `Could not fetch info for project ${this.gitlabProjectId}: ${err}`
+          `Could not fetch info for project ${this.projectId}: ${err}`
         );
         throw err;
       });
@@ -107,13 +109,9 @@ export class GitLabHelper {
    * Gets all notes for a given issue.
    */
   async getIssueNotes(issueIid: number): Promise<GitLabNote[]> {
-    return this.gitlabApi.IssueNotes.all(
-      this.gitlabProjectId,
-      issueIid,
-      {}
-    ).catch(err => {
+    return this.api.IssueNotes.all(this.projectId, issueIid, {}).catch(err => {
       console.error(`Could not fetch notes for GitLab issue #${issueIid}.`);
-      return [];
+      throw err;
     });
   }
 
@@ -143,14 +141,14 @@ export class GitLabHelper {
    */
   async getAllBranches(): Promise<GitLabBranch[]> {
     if (!this.allBranches) {
-      this.allBranches = await this.gitlabApi.Branches.all(
-        this.gitlabProjectId
-      ).catch(err => {
-        console.log(
-          `Could not fetch branches for project ${this.gitlabProjectId}: ${err}`
-        );
-        return [];
-      });
+      this.allBranches = await this.api.Branches.all(this.projectId).catch(
+        err => {
+          console.error(
+            `Could not fetch branches for project ${this.projectId}: ${err}`
+          );
+          throw err;
+        }
+      );
     }
     return this.allBranches;
   }
@@ -161,13 +159,13 @@ export class GitLabHelper {
    */
   async getAllMilestones(): Promise<GitLabMilestone[]> {
     if (!this.allMilestones) {
-      this.allMilestones = await this.gitlabApi.ProjectMilestones.all(
-        this.gitlabProjectId
+      this.allMilestones = await this.api.ProjectMilestones.all(
+        this.projectId
       ).catch(err => {
-        console.log(
-          `Could not fetch milestones for project ${this.gitlabProjectId}: ${err}`
+        console.error(
+          `Could not fetch milestones for project ${this.projectId}: ${err}`
         );
-        return [];
+        throw err;
       });
     }
     return this.allMilestones;
@@ -180,33 +178,33 @@ export class GitLabHelper {
   async getAllIssues(): Promise<GitLabIssue[]> {
     if (!this.allIssues) {
       // FIXME: Issues.all() returns Omit<IssueSchema, "epic">
-      this.allIssues = (await this.gitlabApi.Issues.all({
-        projectId: this.gitlabProjectId,
+      this.allIssues = (await this.api.Issues.all({
+        projectId: this.projectId,
         labels: this.filterByLabel,
       }).catch(err => {
-        console.log(
-          `Could not fetch issues for project ${this.gitlabProjectId}: ${err}`
+        console.error(
+          `Could not fetch issues for project ${this.projectId}: ${err}`
         );
-        return [];
+        throw err;
       })) as GitLabIssue[];
     }
     return this.allIssues;
   }
 
   /**
-   *
+   *  TODO Use pagination
    * @returns All merge requests for the current project (cached)
    */
   async getAllMergeRequests(): Promise<GitLabMergeRequest[]> {
     if (!this.allMergeRequests) {
-      this.allMergeRequests = await this.gitlabApi.MergeRequests.all({
-        projectId: this.gitlabProjectId,
+      this.allMergeRequests = await this.api.MergeRequests.all({
+        projectId: this.projectId,
         labels: this.filterByLabel,
       }).catch(err => {
-        console.log(
-          `Could not fetch merge requests for project ${this.gitlabProjectId}: ${err}`
+        console.error(
+          `Could not fetch merge requests for project ${this.projectId}: ${err}`
         );
-        return [];
+        throw err;
       });
     }
     return this.allMergeRequests;
@@ -216,13 +214,15 @@ export class GitLabHelper {
    * @returns All notes for the given merge request.
    */
   async getAllMergeRequestNotes(mrId: number): Promise<GitLabNote[]> {
-    return this.gitlabApi.MergeRequestNotes.all(
-      this.gitlabProjectId,
-      mrId,
-      {}
-    ).catch(err => {
-      console.error(`Could not fetch notes for GitLab merge request #${mrId}.`);
-      return [];
+    return this.api.MergeRequestNotes.all(this.projectId, mrId, {}).catch(
+      err => {
+        console.error(
+          `Could not fetch notes for GitLab merge request #${mrId}.`
+        );
+        throw err;
+      }
+    );
+  }
     });
   }
 }

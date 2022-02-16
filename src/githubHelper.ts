@@ -4,6 +4,7 @@ import * as utils from './utils';
 import { SimpleItem } from './utils';
 import { Octokit as GitHubApi, RestEndpointMethodTypes } from '@octokit/rest';
 import { Endpoints, RequestError } from '@octokit/types';
+import { throttling } from '@octokit/plugin-throttling';
 
 export interface GitHubIssueData {
   title: string;
@@ -80,11 +81,39 @@ export class GitHubHelper {
   useIssueImportAPI: boolean;
 
   constructor(
-    githubApi: GitHubApi,
     githubSettings: GithubSettings,
     useIssuesForAllMergeRequests: boolean
   ) {
-    this.githubApi = githubApi;
+    const MyOctokit = GitHubApi.plugin(throttling);
+    this.githubApi = new MyOctokit({
+      previews: githubSettings.useIssueImportAPI ? ['golden-comet'] : [],
+      debug: false,
+      baseUrl: githubSettings.apiUrl
+        ? githubSettings.apiUrl
+        : 'https://api.github.com',
+      timeout: 5000,
+      headers: {
+        'user-agent': 'node-gitlab-2-github', // GitHub is happy with a unique user agent
+        accept: 'application/vnd.github.v3+json',
+      },
+      auth: 'token ' + githubSettings.token,
+      throttle: {
+        onRateLimit: async (retryAfter: number, options: any) => {
+          console.log(
+            `Request quota exhausted for request ${options.method} ${options.url}`
+          );
+          await utils.sleep(60000);
+          return true;
+        },
+        onAbuseLimit: async (retryAfter: number, options: any) => {
+          console.log(
+            `Abuse detected for request ${options.method} ${options.url}`
+          );
+          await utils.sleep(60000);
+          return true;
+        },
+      },
+    });
     this.githubUrl = githubSettings.baseUrl;
     this.githubOwner = githubSettings.owner;
     this.githubToken = githubSettings.token;
