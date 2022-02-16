@@ -2,7 +2,6 @@ import { GitHubHelper, GitHubLabelData } from './githubHelper';
 import {
   GitLabHelper,
   GitLabIssue,
-  GitLabLabel,
   GitLabMergeRequest,
   GitLabMilestone,
 } from './gitlabHelper';
@@ -300,9 +299,9 @@ async function transferLabels(attachmentLabel: boolean, useLowerCase: boolean) {
   inform('Transferring Labels');
 
   // Get a list of all labels associated with this project
-  let labels: GitHubLabelData[] = await gitlabApi.Labels.all(
-    settings.gitlab.projectId
-  ).then(labels => labels.map(l => converter.convertLabel(l, useLowerCase)));
+  let labels: GitHubLabelData[] = await gitlabHelper
+    .getAllLabels()
+    .then(labels => labels.map(l => converter.convertLabel(l, useLowerCase)));
 
   // get a list of the current label names in the new GitHub repo (likely to be just the defaults)
   const githubLabels: string[] = await githubHelper.getAllLabelNames();

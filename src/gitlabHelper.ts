@@ -223,6 +223,14 @@ export class GitLabHelper {
       }
     );
   }
+
+  /**
+   * @returns All labels for the project
+   */
+  async getAllLabels(): Promise<GitLabLabel[]> {
+    return this.api.Labels.all(this.projectId).catch(err => {
+      console.error('Could not fetch labels: ', err);
+      throw err;
     });
   }
 }

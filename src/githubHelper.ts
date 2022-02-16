@@ -178,7 +178,7 @@ export class GitHubHelper {
       .catch(err => {
         console.error('Could not retrieve GitHub milestones');
         console.error(err);
-        return [];
+        throw err;
       });
   }
 
