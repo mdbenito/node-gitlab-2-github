@@ -58,8 +58,8 @@ export class S3Helper implements StorageHelper {
   prefix?: string;
 
   constructor(
-    gitlabHelper: GitLabHelper,
     s3settings: S3Settings,
+    gitlabHelper: GitLabHelper,
     prefix?: string
   ) {
     this.gitlabHelper = gitlabHelper;
